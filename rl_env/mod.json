@@ -1,0 +1,17 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "louiegmd.rl_env",
+	"name": "rl_env",
+	"version": "v1.0.0",
+	"developer": "louiegmd",
+	"description": "",
+	"dependencies": {
+		"geode.node-ids": ">=v1.23.3"
+	}
+}
