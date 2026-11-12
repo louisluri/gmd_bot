@@ -20,3 +20,16 @@ image_width = 512
 image_height = 320
 
 n_embed = 256
+
+class model(nn.Module):
+    def __init__(self, in_feat, n_embed, out_feat):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_feat, n_embed),
+            nn.ReLU(),
+            nn.Linear(n_embed, out_feat)
+        )
+        
+    def forward(self, x):
+        return self.net(x)
