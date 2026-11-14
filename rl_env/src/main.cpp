@@ -14,19 +14,23 @@ namespace
     SOCKET sock = INVALID_SOCKET;
     SOCKET python_socket = INVALID_SOCKET;
     bool socket_initialized = false;
+    bool p_socket_initialized = false;
 
     CCRenderTexture* texture = nullptr;
     std::vector<uint8_t> gray;
+    const int scaling_factor = 4;
 
     struct FrameHeader
     {
         uint32_t dead;
+        uint32_t level_won;
+        uint32_t quit;
         uint32_t width;
         uint32_t height;
         uint32_t bytes;
     };
 
-    static_assert(sizeof(FrameHeader) == 16);
+    static_assert(sizeof(FrameHeader) == 24);
 
 	struct SimulationState 
 	{
@@ -35,9 +39,15 @@ namespace
 		bool step_requested = false;
 		bool injecting_input = false;
         bool frame_requested = false;
+        bool terminal_requested = false;
+        bool reset_pending = false;
     };
 
     SimulationState sim;
+
+    bool dead = false;
+    bool won = false;
+    bool quit = false;
 
     constexpr float step_dt = 1.0f / 240.0f;
 }
@@ -49,6 +59,7 @@ void reset_sim()
     sim.step_requested = false;
     sim.injecting_input = false;
     sim.frame_requested = true;
+    sim.reset_pending = false;
 }
 
 bool change_blocking_mode(SOCKET &socket, u_long mode)
@@ -58,7 +69,7 @@ bool change_blocking_mode(SOCKET &socket, u_long mode)
             if (mode == 0) {log::error("Failed to enable blocking mode!");}
             else {log::error("Failed to enable nonblocking mode!");}
             closesocket(socket);
-            socket = INVALID_SOCKET; 
+            socket = INVALID_SOCKET;
             return false;
         }
     return true;
@@ -127,6 +138,8 @@ bool check_socket()
 
     if (python_socket == INVALID_SOCKET) 
     {
+        if (p_socket_initialized) {return false;}
+
         python_socket = accept(sock, nullptr, nullptr);
 
         if (python_socket == INVALID_SOCKET)
@@ -142,6 +155,9 @@ bool check_socket()
         }
         else 
         {
+            log::info("Python socket connected!");
+            p_socket_initialized = true;
+
             DWORD timeout_ms = 2000;
             if (setsockopt(python_socket, SOL_SOCKET, SO_SNDTIMEO,
                reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms)) == SOCKET_ERROR)
@@ -151,8 +167,6 @@ bool check_socket()
                 python_socket = INVALID_SOCKET;
                 return false;
             }
-
-            log::info("Python connected!");
             sim.frame_requested = true;
         }
     }
@@ -173,7 +187,7 @@ void initialize_texture()
 
     auto size = director->getWinSize();
 
-    texture = CCRenderTexture::create(static_cast<int>(size.width / 4), static_cast<int>(size.height / 4));
+    texture = CCRenderTexture::create(static_cast<int>(size.width / scaling_factor), static_cast<int>(size.height / scaling_factor));
 
     if (!texture) 
     {
@@ -256,16 +270,16 @@ void capture_and_send_data()
 {
     if (!check_socket()) {return;}
 
-    static auto last_time = std::chrono::steady_clock::now();
-
-    static double t_image = 0;
-    static double t_send_data = 0;
-    static double t_grey = 0;
-    static int frames = 0;
-
-    if (PlayLayer::get()->m_playerDied)
+    if (sim.terminal_requested)
     {
-        FrameHeader header{htonl(1), htonl(0), htonl(0), htonl(0)};
+        if (!(dead || won || quit)) 
+        {
+            log::info("Terminal requested but no terminal value set to true");
+            return;
+        }
+
+        FrameHeader header{htonl(dead), htonl(won), htonl(quit), 
+                            htonl(0), htonl(0), htonl(0)};
 
         if (!change_blocking_mode(python_socket, 0) ||
             !send_data(&header, sizeof(header))) 
@@ -275,9 +289,13 @@ void capture_and_send_data()
 
         change_blocking_mode(python_socket, 1);
 
-        sim.frame_requested = false;
+        dead = false;
+        won = false;
+        quit = false;
+        sim.terminal_requested = false;
         return;
     }
+    else if (sim.reset_pending) {return;}
 
     CCDirector* director = CCDirector::sharedDirector();
     CCScene* scene = director->getRunningScene();
@@ -298,7 +316,7 @@ void capture_and_send_data()
     kmGLMatrixMode(KM_GL_MODELVIEW);
     kmGLPushMatrix();
 
-    kmGLScalef(0.25f, 0.25f, 1.0f);
+    kmGLScalef(1.0f / scaling_factor, 1.0f / scaling_factor, 1.0f);
 
     scene->visit();
 
@@ -306,11 +324,7 @@ void capture_and_send_data()
 
     texture->end();
 
-    auto start = std::chrono::steady_clock::now();
     CCImage* image = texture->newCCImage(true);
-    t_image += std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start
-    ).count();
 
     if (!image) 
     {
@@ -326,10 +340,10 @@ void capture_and_send_data()
 
     //log::info("Captured {}x{} frame, {} bytes", width, height, bytes);
 
-    FrameHeader header{htonl(0), htonl(width), htonl(height), htonl(bytes)};
+    FrameHeader header{htonl(0), htonl(0), htonl(0), 
+                        htonl(width), htonl(height), htonl(bytes)};
 
     gray.resize(width * height);
-    start = std::chrono::steady_clock::now();
     for (int i = 0; i < width * height; i++)
     {
         int index = i * 4;
@@ -340,35 +354,11 @@ void capture_and_send_data()
             0.114f * pixels[index + 2]
         );
     }
-    t_grey += std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start
-    ).count();
 
     if (!change_blocking_mode(python_socket, 0) ||
-        !send_data(&header, sizeof(header))) 
+        !send_data(&header, sizeof(header)) || 
+        !send_data(gray.data(), bytes)) 
     {delete image; return;}
-
-    start = std::chrono::steady_clock::now();
-    if (!send_data(gray.data(), bytes)) {delete image; return;}
-    t_send_data += std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start
-    ).count();
-
-    frames++;
-    auto now = std::chrono::steady_clock::now();
-    double elapsed = std::chrono::duration<double>(now - last_time).count();
-    if (elapsed >= 1.0)
-    {
-        log::info("Gray: {:.2f} ms/frame", t_grey / frames);
-        log::info("CCImage: {:.2f} ms/frame", t_image / frames);
-        log::info("Send: {:.2f} ms/frame", t_send_data / frames);   
-
-        t_image = 0.0;
-        t_send_data = 0.0;
-        t_grey = 0.0;
-        frames = 0;
-        last_time = now;
-    }
 
     change_blocking_mode(python_socket, 1);
 
@@ -387,28 +377,25 @@ class $modify(MyGameLayer, GJBaseGameLayer)
             return;
         }
 
-        static auto last_time = std::chrono::steady_clock::now();
+        //static auto last_time = std::chrono::steady_clock::now();
+        //static int total_updates = 0;
+        //static int successful_updates = 0;
+        //total_updates++;
+        //auto now = std::chrono::steady_clock::now();
+        //double elapsed = std::chrono::duration<double>(now - last_time).count();
+        //if (elapsed >= 5.0)
+        //{
+        //    log::info("Updates/sec: {:.1f}", total_updates / elapsed);
+        //    log::info("Successful steps/sec: {:.1f}", successful_updates / elapsed);
+        //    total_updates = 0;
+        //    successful_updates = 0;
+        //    last_time = now;
+        //}
 
-        static int total_updates = 0;
-        static int successful_updates = 0;
-
-        total_updates++;
-
-        auto now = std::chrono::steady_clock::now();
-
-        double elapsed = std::chrono::duration<double>(now - last_time).count();
-
-        if (elapsed >= 1.0)
+        if (sim.frame_requested || sim.terminal_requested) 
         {
-            log::info("Updates/sec: {:.1f}", total_updates / elapsed);
-            log::info("Successful steps/sec: {:.1f}", successful_updates / elapsed);
-
-            total_updates = 0;
-            successful_updates = 0;
-            last_time = now;
+            capture_and_send_data();
         }
-
-        if (sim.frame_requested) {capture_and_send_data();}
 
         // Check whether Python sent a command
         receive_python_input();
@@ -431,7 +418,7 @@ class $modify(MyGameLayer, GJBaseGameLayer)
         // Advance the simulation
         GJBaseGameLayer::update(step_dt);
 
-        successful_updates++;
+        //successful_updates++;
 
         // request another frame
         sim.frame_requested = true;
@@ -457,7 +444,7 @@ class $modify(MyPlayLayer, PlayLayer)
             return false;
         }
 
-        // Set up socket if necessary
+        // Set up socket
         initialize_socket();
 
         // initialize a texture to load new frames into
@@ -465,38 +452,57 @@ class $modify(MyPlayLayer, PlayLayer)
 
         reset_sim();
 
+        sim.injecting_input = true;
+        GJBaseGameLayer::handleButton(false, 1, true);
+        sim.injecting_input = false;
+
         return true;
     }
 
     void resetLevel()
     {
         PlayLayer::resetLevel();
+        log::info("resetLevel hook called");
+
+        sim.injecting_input = true;
+        GJBaseGameLayer::handleButton(false, 1, true);
+        sim.injecting_input = false;
+
         reset_sim();
+    }
+    
+    void destroyPlayer(PlayerObject* player, GameObject* cause) {
+        bool wasDead = m_playerDied;
+
+        PlayLayer::destroyPlayer(player, cause);
+
+        // Only report a death if the player actually died
+        if (!wasDead && m_playerDied) {
+            dead = true;
+            sim.terminal_requested = true;
+            sim.reset_pending = true;
+
+            log::info("Player actually died!");
+        }
+    }
+
+    void levelComplete() {
+        log::info("Level complete hook called!");
+
+        won = true;
+        sim.terminal_requested = true;
+        sim.reset_pending = true;
+        resetLevel(); // my reset level hook
     }
 
     void onQuit()
     {
-        if (texture)
-        {
-            texture->release();
-            texture = nullptr;
-        }
-
         if (python_socket != INVALID_SOCKET)
         {
-            closesocket(python_socket);
-            python_socket = INVALID_SOCKET;
+            quit = true;
+            sim.terminal_requested = true;
+            capture_and_send_data();
         }
-
-        if (sock != INVALID_SOCKET)
-        {
-            closesocket(sock);
-            sock = INVALID_SOCKET;
-        }
-
-        if (socket_initialized) {WSACleanup();}
-
-        socket_initialized = false;
 
         PlayLayer::onQuit();
     }

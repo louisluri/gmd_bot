@@ -10,11 +10,11 @@ People online have been rather unsuccessfull training RL agents to play Geometry
 test a few
 
 
-## Features
+## Layout
 
-- Advance the game through Python commands
-- Control jump input
-- Render game frames in Python
+"rl_env" folder is a geode mod, the "src" subfolder holds the actual code I wrote. Everything else just was there when I initialized the mod. "mod.json" shows the properties.
+
+"train.py" is the python script you run that interacts with Geometry Dash and trains the agent.
 
 
 ## Requirements
@@ -22,21 +22,6 @@ test a few
 - Geometry Dash 2.2081
 - Geode 5.11.2
 - torch
-
-
-## Setup
-
-1. Clone this repository.
-2. Download and set up Geode
-3. While in the mod folder run: geode build
-
-
-## Usage
-
-1. Open Geometry Dash and set your fps to the same as your step_dt in the mod.
-2. Go to geode settings and activate the terminal so that you can see if errors arise
-3. Open a level, the game should freeze on the first step
-4. Run the Python train script
 
 
 ## How It Works
