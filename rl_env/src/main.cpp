@@ -6,11 +6,22 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 
 using namespace geode::prelude;
 
 namespace 
 {
+    struct RLSettings 
+    {
+        int port = 5555;
+        bool debug_logging = false;
+        float step_dt = 1.0f / 240.0f;
+        int render_scale = 4;
+    };
+
+    RLSettings settings;
+
     SOCKET sock = INVALID_SOCKET;
     SOCKET python_socket = INVALID_SOCKET;
     bool socket_initialized = false;
@@ -18,7 +29,6 @@ namespace
 
     CCRenderTexture* texture = nullptr;
     std::vector<uint8_t> gray;
-    const int scaling_factor = 4;
 
     struct FrameHeader
     {
@@ -48,8 +58,68 @@ namespace
     bool dead = false;
     bool won = false;
     bool quit = false;
+}
 
-    constexpr float step_dt = 1.0f / 240.0f;
+void load_settings()
+{
+    auto* mod = Mod::get();
+
+    settings.port = static_cast<int>(
+        mod->getSettingValue<int64_t>("port")
+    );
+
+    settings.debug_logging =
+        mod->getSettingValue<bool>("debug-logging");
+
+    settings.step_dt = 1.0f / static_cast<int>(
+        mod->getSettingValue<int64_t>("step-size")
+    );
+
+    settings.render_scale = static_cast<int>(
+        mod->getSettingValue<int64_t>("render-scale")
+    );
+}
+
+void reset_mod()
+{
+    // Close Python connection
+    if (python_socket != INVALID_SOCKET) {
+        closesocket(python_socket);
+        python_socket = INVALID_SOCKET;
+    }
+
+    // Close listening socket
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+
+    // Clean up Winsock
+    if (socket_initialized) {
+        WSACleanup();
+        socket_initialized = false;
+    }
+
+    // Reset connection state
+    p_socket_initialized = false;
+
+    // Release texture
+    if (texture) {
+        texture->release();
+        texture = nullptr;
+    }
+
+    gray.clear();
+
+    // Reset simulation
+    sim = SimulationState{};
+
+    // Reset terminal flags
+    dead = false;
+    won = false;
+    quit = false;
+
+    log::info("RL mod successfully reset!");
 }
 
 void reset_sim()
@@ -100,7 +170,7 @@ void initialize_socket()
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = htons(5555);
+    address.sin_port = htons(static_cast<uint16_t>(settings.port));
 
     if (bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address)) 
         == SOCKET_ERROR)
@@ -129,7 +199,7 @@ void initialize_socket()
 
     socket_initialized = true;
 
-    log::info("Socket listening on port 5555!");
+    log::info("Socket listening on port {}!", settings.port);
 }
 
 bool check_socket()
@@ -158,7 +228,7 @@ bool check_socket()
             log::info("Python socket connected!");
             p_socket_initialized = true;
 
-            DWORD timeout_ms = 2000;
+            DWORD timeout_ms = 60000;
             if (setsockopt(python_socket, SOL_SOCKET, SO_SNDTIMEO,
                reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms)) == SOCKET_ERROR)
             {
@@ -176,6 +246,11 @@ bool check_socket()
 
 void initialize_texture()
 {
+    if (texture) {
+        texture->release();
+        texture = nullptr;
+    }
+
     CCDirector* director = CCDirector::sharedDirector();
     CCScene* scene = director->getRunningScene();
 
@@ -187,7 +262,8 @@ void initialize_texture()
 
     auto size = director->getWinSize();
 
-    texture = CCRenderTexture::create(static_cast<int>(size.width / scaling_factor), static_cast<int>(size.height / scaling_factor));
+    texture = CCRenderTexture::create(static_cast<int>(size.width / settings.render_scale), 
+                                        static_cast<int>(size.height / settings.render_scale));
 
     if (!texture) 
     {
@@ -274,7 +350,7 @@ void capture_and_send_data()
     {
         if (!(dead || won || quit)) 
         {
-            log::info("Terminal requested but no terminal value set to true");
+            log::error("Terminal requested but no terminal value set to true");
             return;
         }
 
@@ -316,7 +392,7 @@ void capture_and_send_data()
     kmGLMatrixMode(KM_GL_MODELVIEW);
     kmGLPushMatrix();
 
-    kmGLScalef(1.0f / scaling_factor, 1.0f / scaling_factor, 1.0f);
+    kmGLScalef(1.0f / settings.render_scale, 1.0f / settings.render_scale, 1.0f);
 
     scene->visit();
 
@@ -369,31 +445,34 @@ void capture_and_send_data()
 class $modify(MyGameLayer, GJBaseGameLayer) 
 {
     void update(float dt) 
-	{
+    {
         // Allow non-gameplay layers to update normally
-        if (!PlayLayer::get())
-        {
+        if (!PlayLayer::get()) {
             GJBaseGameLayer::update(dt);
             return;
         }
 
-        //static auto last_time = std::chrono::steady_clock::now();
-        //static int total_updates = 0;
-        //static int successful_updates = 0;
-        //total_updates++;
-        //auto now = std::chrono::steady_clock::now();
-        //double elapsed = std::chrono::duration<double>(now - last_time).count();
-        //if (elapsed >= 5.0)
-        //{
-        //    log::info("Updates/sec: {:.1f}", total_updates / elapsed);
-        //    log::info("Successful steps/sec: {:.1f}", successful_updates / elapsed);
-        //    total_updates = 0;
-        //    successful_updates = 0;
-        //    last_time = now;
-        //}
+        static auto last_time = std::chrono::steady_clock::now();
+        static int total_updates = 0;
+        static int successful_updates = 0;
 
-        if (sim.frame_requested || sim.terminal_requested) 
+        if (settings.debug_logging)
         {
+            total_updates++;
+            auto now = std::chrono::steady_clock::now();
+            double elapsed = std::chrono::duration<double>(now - last_time).count();
+            if (elapsed >= 5.0)
+            {
+                log::info("Updates/sec: {:.1f}", total_updates / elapsed);
+                log::info("Successful steps/sec: {:.1f}", successful_updates / elapsed);
+                total_updates = 0;
+                successful_updates = 0;
+                last_time = now;
+            }
+        }
+        
+
+        if (sim.frame_requested || sim.terminal_requested) {
             capture_and_send_data();
         }
 
@@ -406,8 +485,7 @@ class $modify(MyGameLayer, GJBaseGameLayer)
 		sim.step_requested = false;
 
         // Only send input when the button state changes
-        if (sim.jump_requested != sim.jump_held)
-		{
+        if (sim.jump_requested != sim.jump_held) {
             sim.injecting_input = true;
             handleButton(sim.jump_requested, 1, true);
             sim.injecting_input = false;
@@ -416,9 +494,9 @@ class $modify(MyGameLayer, GJBaseGameLayer)
     	}
 
         // Advance the simulation
-        GJBaseGameLayer::update(step_dt);
+        GJBaseGameLayer::update(settings.step_dt);
 
-        //successful_updates++;
+        if (settings.debug_logging) {successful_updates++;}
 
         // request another frame
         sim.frame_requested = true;
@@ -437,12 +515,14 @@ class $modify(MyGameLayer, GJBaseGameLayer)
 
 class $modify(MyPlayLayer, PlayLayer)
 {
-    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects)
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) 
     {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) 
-		{
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
+
+        // settings that may have been changed
+        load_settings();
 
         // Set up socket
         initialize_socket();
@@ -462,7 +542,7 @@ class $modify(MyPlayLayer, PlayLayer)
     void resetLevel()
     {
         PlayLayer::resetLevel();
-        log::info("resetLevel hook called");
+        if (settings.debug_logging) {log::info("resetLevel hook called");}
 
         sim.injecting_input = true;
         GJBaseGameLayer::handleButton(false, 1, true);
@@ -471,7 +551,8 @@ class $modify(MyPlayLayer, PlayLayer)
         reset_sim();
     }
     
-    void destroyPlayer(PlayerObject* player, GameObject* cause) {
+    void destroyPlayer(PlayerObject* player, GameObject* cause) 
+    {
         bool wasDead = m_playerDied;
 
         PlayLayer::destroyPlayer(player, cause);
@@ -482,12 +563,13 @@ class $modify(MyPlayLayer, PlayLayer)
             sim.terminal_requested = true;
             sim.reset_pending = true;
 
-            log::info("Player actually died!");
+            if (settings.debug_logging) {log::info("Player actually died!");}
         }
     }
 
-    void levelComplete() {
-        log::info("Level complete hook called!");
+    void levelComplete() 
+    {
+        if (settings.debug_logging) {log::info("Level complete hook called!");}
 
         won = true;
         sim.terminal_requested = true;
@@ -495,15 +577,64 @@ class $modify(MyPlayLayer, PlayLayer)
         resetLevel(); // my reset level hook
     }
 
-    void onQuit()
+    void onQuit() 
     {
-        if (python_socket != INVALID_SOCKET)
-        {
+        if (python_socket != INVALID_SOCKET) {
             quit = true;
             sim.terminal_requested = true;
             capture_and_send_data();
         }
-
+        
         PlayLayer::onQuit();
+    }
+};
+
+class $modify(MyMenuLayer, MenuLayer)
+{
+    bool init()
+    {
+        if (!MenuLayer::init()) {
+            return false;
+        }
+
+        auto size = CCDirector::sharedDirector()->getWinSize();
+
+        // Create button
+        auto sprite = ButtonSprite::create("Reset Env");
+        sprite->setScale(0.6f);
+
+        auto button = CCMenuItemSpriteExtra::create(
+            sprite,
+            this,
+            menu_selector(MyMenuLayer::onResetMod)
+        );
+
+        // Create menu
+        auto menu = CCMenu::create();
+        menu->setPosition(CCPointZero);
+
+        // Position button in top-right corner
+        button->setPosition({
+            size.width - 47.f,
+            size.height - 13.f
+        });
+
+        if (menu) {
+            menu->addChild(button);
+            this->addChild(menu, 100);
+        }
+
+        return true;
+    }
+
+    void onResetMod(CCObject*)
+    {
+        reset_mod();
+
+        FLAlertLayer::create(
+            "RL Mod",
+            "Mod successfully reset!",
+            "OK"
+        )->show();
     }
 };

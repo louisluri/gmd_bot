@@ -2,11 +2,11 @@ import torch
 import numpy as np
 import os
 
-def reset_buffer(frames, first_frame):
+def reset_buffer(frames, first_frame, num_frames):
     frames.clear()
 
     # Fill the initial history with the starting frame
-    for _ in range(4):
+    for _ in range(num_frames):
         frames.append(first_frame.clone().unsqueeze(0))
 
 def add_frame(frames, frame):

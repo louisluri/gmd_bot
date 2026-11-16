@@ -13,5 +13,37 @@
 	"description": "",
 	"dependencies": {
 		"geode.node-ids": ">=v1.23.3"
-	}
+	},
+	"settings": {
+    "debug-logging": {
+        "type": "bool",
+        "name": "Debug Logging",
+        "description": "Enable additional RL environment logs",
+        "default": false
+    },
+    "step-size": {
+        "type": "int",
+        "name": "Simulation Step Size",
+        "description": "Simulation step size per physics tic and model input. Will be in the format (1 / x), so 240 is 1 / 240 of a second which is 240 fps gameplay",
+        "default": 240,
+        "min": 30,
+        "max": 480
+    },
+    "render-scale": {
+        "type": "int",
+        "name": "Render Scale",
+        "description": "Factor used to reduce screenshot resolution",
+        "default": 4,
+        "min": 1,
+        "max": 16
+    },
+    "port": {
+        "type": "int",
+        "name": "Port",
+        "description": "TCP port used to communicate with Python",
+        "default": 5555,
+        "min": 1024,
+        "max": 65535
+    }
+}
 }

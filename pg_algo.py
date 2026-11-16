@@ -3,13 +3,6 @@ from torch.distributions import Categorical
 import torch.nn.functional as F
 import torch.optim as optim
 
-if torch.cuda.is_available():
-    device = torch.device(
-        "cuda:1" if torch.cuda.device_count() > 1 else "cuda:0"
-    )
-else:
-    device = torch.device("cpu")
-
 algo_code = "pg"
 header = "episode,step,reward"
 
@@ -32,13 +25,18 @@ history = [] # To store episode, step, reward for plotting
 m = None
 o = None
 
-def init(model_class, cp_path):
-    global m, o, lr, device, episode
+def init(model_class, cp_path, device, train):
+    global m, o, lr, episode
 
     m = model_class().to(device)
-    o = optim.Adam(m.parameters(), lr=lr)
+
+    if train:
+        o = optim.Adam(m.parameters(), lr=lr)
+    else:
+        m.eval()
 
     if cp_path is not None:
+        print("loading cp...")
         checkpoint = torch.load(
             cp_path,
             map_location=device,
@@ -47,7 +45,9 @@ def init(model_class, cp_path):
 
         # Restore model and optimizer
         m.load_state_dict(checkpoint["model"])
-        o.load_state_dict(checkpoint["optimizer"])
+
+        if train:
+            o.load_state_dict(checkpoint["optimizer"])
 
         episode = checkpoint["episode"]
 
@@ -55,9 +55,17 @@ def init(model_class, cp_path):
 
         return checkpoint["step"]
     else:
+        print("no cp found")
         return 0
 
-def step(step, reward, state, dead=False, won=False, quit=False):
+@torch.no_grad()
+def infer(device, state):
+    state = state.to(device=device, dtype=torch.float32) / 255.0
+    logits = m(state)
+
+    return logits.argmax(dim=-1).item()
+
+def step(device, step, reward, state, dead=False, won=False, quit=False):
 
     global total_reward, episode, step_counter, last_sucessful
     global rewards, saved_log_probs, saved_returns
