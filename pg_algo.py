@@ -8,7 +8,7 @@ header = "episode,step,reward"
 
 # Hyperparameters
 batch_size = 2000 # how many target steps per update
-gamma = 0.999  # Discount factor
+gamma = 0.95  # Discount factor
 lr = 0.0005  # Learning rate
 
 total_reward = 0

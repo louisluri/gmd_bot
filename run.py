@@ -22,23 +22,23 @@ header_size = 24
 
 render = False
 
-train = True
-
-save = False    # save model and data when done?
-model_number = "00"
-save_name = f"a_{a.algo_code}_m_{m.model_code}{model_number}"
-
+train = False
+save = True    # save model and data when done?
 load = False
+model_number = "00"
 load_step = 6867
-load_file = f"checkpoints/{save_name}_step{load_step}.pt" if load else None
+
+level_name = "bottest"
+save_file = f"{level_name}_{a.algo_code}_{m.model_code}{model_number}"
+load_file = f"checkpoints/{save_file}_step{load_step}.pt" if load else None
 
 frames = deque(maxlen=num_frames)
 
 def get_reward(dead, won):
     if dead:
-        return -10
+        return -1
     elif won:
-        return 10
+        return 1
     else:
         return 0
 
@@ -135,4 +135,4 @@ finally:
     print("finally")
     if save and a.last_sucessful != 0 and train:
         print("Saving and exiting...")
-        helpers.save_checkpoint(a.last_sucessful, a.episode, save_name, a.header, a.m, a.o, a.history)
+        helpers.save_checkpoint(a.last_sucessful, a.episode, save_file, a.header, a.m, a.o, a.history)
