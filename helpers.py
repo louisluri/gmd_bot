@@ -33,7 +33,7 @@ def recv_exact(sock, n):
 
     return data
 
-def save_checkpoint(step, episode, name, header, model, optim, data):
+def save_checkpoint(step, episode, folder, header, model, optim, data):
     # Save only the weights (state_dict) to a .pt file
     checkpoint = {
         "model": model.state_dict(),
@@ -41,13 +41,13 @@ def save_checkpoint(step, episode, name, header, model, optim, data):
         "step": step,
         "episode": episode
     }
-    torch.save(checkpoint, f"checkpoints/{name}/step{step}.pt")
+    torch.save(checkpoint, f"{folder}/step{step}.pt")
 
     print("Model checkpoint saved successfully!")
 
     # Save to CSV, specifying a comma delimiter and a clean header
     np.savetxt(
-        f"metrics/{name}/step{step}.csv", 
+        f"{folder}/step{step}.csv", 
         np.array(data), 
         delimiter=",", 
         header=header, 

@@ -1,4 +1,5 @@
 import torch.nn as nn
+import cnn
 
 model_code = "pg"
     
@@ -6,16 +7,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.convolutions = nn.Sequential(
-            nn.Conv2d(4, 16, kernel_size=8, stride=4),
-            nn.ReLU(),
-
-            nn.Conv2d(16, 32, kernel_size=4, stride=2),
-            nn.ReLU(),
-
-            nn.Conv2d(32, 64, kernel_size=3, stride=2),
-            nn.ReLU()
-        )
+        self.convolutional = cnn.CNN()
 
         self.layers = nn.Sequential(
             nn.Linear(34560, 512),
@@ -43,6 +35,6 @@ class Model(nn.Module):
         nn.init.constant_(self.layers[-1].bias, 0)
 
     def forward(self, x):
-        x = self.convolutions(x)
+        x = self.convolutional(x)
         x = x.flatten(start_dim=1)
         return self.layers(x)

@@ -27,21 +27,21 @@ train = True
 
 save = True    # save model and data when done?
 save_steps = 10000
+current_level = "cubetest"
 
 load = False
 
 model_number = "00"
 load_step = 3146
+load_level = "cubetest"
 
-save_folder = f"{a.algo_code}_{m.model_code}{model_number}"
-load_file = f"checkpoints/{save_folder}/step{load_step}.pt" if load else None
+save_folder = f"saves/{a.algo_code}_{m.model_code}{model_number}/{current_level}"
+load_file   = f"saves/{a.algo_code}_{m.model_code}{model_number}/{load_level}/step{load_step}.pt" if load else None
 
 if save:
-    os.makedirs("checkpoints", exist_ok=True)
-    os.makedirs("metrics", exist_ok=True)
-    
-    os.makedirs(f"checkpoints/{save_folder}", exist_ok=True)
-    os.makedirs(f"metrics/{save_folder}", exist_ok=True)
+    os.makedirs("saves", exist_ok=True)
+    os.makedirs(f"saves/{a.algo_code}_{m.model_code}{model_number}", exist_ok=True)
+    os.makedirs(f"{save_folder}", exist_ok=True)
 
 frames = deque(maxlen=num_frames)
 
