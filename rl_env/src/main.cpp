@@ -35,12 +35,13 @@ namespace
         uint32_t dead;
         uint32_t level_won;
         uint32_t quit;
+        uint32_t progress;
         uint32_t width;
         uint32_t height;
         uint32_t bytes;
     };
 
-    static_assert(sizeof(FrameHeader) == 24);
+    static_assert(sizeof(FrameHeader) == 28);
 
 	struct SimulationState 
 	{
@@ -58,6 +59,7 @@ namespace
     bool dead = false;
     bool won = false;
     bool quit = false;
+    uint32_t terminal_progress = 0;
 }
 
 void load_settings()
@@ -354,8 +356,8 @@ void capture_and_send_data()
             return;
         }
 
-        FrameHeader header{htonl(dead), htonl(won), htonl(quit), 
-                            htonl(0), htonl(0), htonl(0)};
+        FrameHeader header{htonl(dead), htonl(won), htonl(quit), htonl(terminal_progress), 
+            htonl(0), htonl(0), htonl(0)};
 
         if (!change_blocking_mode(python_socket, 0) ||
             !send_data(&header, sizeof(header))) 
@@ -417,7 +419,8 @@ void capture_and_send_data()
     //log::info("Captured {}x{} frame, {} bytes", width, height, bytes);
 
     FrameHeader header{htonl(0), htonl(0), htonl(0), 
-                        htonl(width), htonl(height), htonl(bytes)};
+        htonl(static_cast<uint32_t>(PlayLayer::get()->getCurrentPercent() * 100.0f)), 
+        htonl(width), htonl(height), htonl(bytes)};
 
     gray.resize(width * height);
     for (int i = 0; i < width * height; i++)
@@ -447,7 +450,8 @@ class $modify(MyGameLayer, GJBaseGameLayer)
     void update(float dt) 
     {
         // Allow non-gameplay layers to update normally
-        if (!PlayLayer::get()) {
+        if (!PlayLayer::get()) 
+        {
             GJBaseGameLayer::update(dt);
             return;
         }
@@ -472,7 +476,8 @@ class $modify(MyGameLayer, GJBaseGameLayer)
         }
         
 
-        if (sim.frame_requested || sim.terminal_requested) {
+        if (sim.frame_requested || sim.terminal_requested) 
+        {
             capture_and_send_data();
         }
 
@@ -485,7 +490,8 @@ class $modify(MyGameLayer, GJBaseGameLayer)
 		sim.step_requested = false;
 
         // Only send input when the button state changes
-        if (sim.jump_requested != sim.jump_held) {
+        if (sim.jump_requested != sim.jump_held) 
+        {
             sim.injecting_input = true;
             handleButton(sim.jump_requested, 1, true);
             sim.injecting_input = false;
@@ -517,9 +523,7 @@ class $modify(MyPlayLayer, PlayLayer)
 {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) 
     {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
-            return false;
-        }
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {return false;}
 
         // settings that may have been changed
         load_settings();
@@ -555,10 +559,13 @@ class $modify(MyPlayLayer, PlayLayer)
     {
         bool wasDead = m_playerDied;
 
+        terminal_progress = static_cast<uint32_t>(getCurrentPercent() * 100.0f);
+
         PlayLayer::destroyPlayer(player, cause);
 
         // Only report a death if the player actually died
-        if (!wasDead && m_playerDied) {
+        if (!wasDead && m_playerDied) 
+        {
             dead = true;
             sim.terminal_requested = true;
             sim.reset_pending = true;
@@ -571,17 +578,25 @@ class $modify(MyPlayLayer, PlayLayer)
     {
         if (settings.debug_logging) {log::info("Level complete hook called!");}
 
+        terminal_progress = 10000; // 100%
         won = true;
         sim.terminal_requested = true;
         sim.reset_pending = true;
+
         resetLevel(); // my reset level hook
     }
 
     void onQuit() 
     {
-        if (python_socket != INVALID_SOCKET) {
+        if (python_socket != INVALID_SOCKET) 
+        {
+            if (!sim.terminal_requested) 
+            {
+                terminal_progress = static_cast<uint32_t>(getCurrentPercent() * 100.0f);
+            }
             quit = true;
             sim.terminal_requested = true;
+
             capture_and_send_data();
         }
         
@@ -593,9 +608,7 @@ class $modify(MyMenuLayer, MenuLayer)
 {
     bool init()
     {
-        if (!MenuLayer::init()) {
-            return false;
-        }
+        if (!MenuLayer::init()) {return false;}
 
         auto size = CCDirector::sharedDirector()->getWinSize();
 
@@ -614,12 +627,10 @@ class $modify(MyMenuLayer, MenuLayer)
         menu->setPosition(CCPointZero);
 
         // Position button in top-right corner
-        button->setPosition({
-            size.width - 47.f,
-            size.height - 13.f
-        });
+        button->setPosition({size.width - 47.f, size.height - 13.f});
 
-        if (menu) {
+        if (menu) 
+        {
             menu->addChild(button);
             this->addChild(menu, 100);
         }

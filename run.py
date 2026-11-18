@@ -4,6 +4,7 @@ import struct
 import numpy as np
 import cv2
 import torch
+import os
 import helpers
 import pg_ffnn as m
 import pg_algo as a
@@ -18,19 +19,29 @@ else:
     device = torch.device("cpu")
 
 num_frames = 4
-header_size = 24
+header_size = 28
 
 render = False
 
-train = False
-save = True    # save model and data when done?
-load = False
-model_number = "00"
-load_step = 6867
+train = True
 
-level_name = "bottest"
-save_file = f"{level_name}_{a.algo_code}_{m.model_code}{model_number}"
-load_file = f"checkpoints/{save_file}_step{load_step}.pt" if load else None
+save = True    # save model and data when done?
+save_steps = 10000
+
+load = False
+
+model_number = "00"
+load_step = 3146
+
+save_folder = f"{a.algo_code}_{m.model_code}{model_number}"
+load_file = f"checkpoints/{save_folder}/step{load_step}.pt" if load else None
+
+if save:
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("metrics", exist_ok=True)
+    
+    os.makedirs(f"checkpoints/{save_folder}", exist_ok=True)
+    os.makedirs(f"metrics/{save_folder}", exist_ok=True)
 
 frames = deque(maxlen=num_frames)
 
@@ -63,16 +74,16 @@ try:
             # Receive frame header
             header = helpers.recv_exact(sock, header_size)
 
-            dead, won, quit, width, height, nbytes = struct.unpack("!IIIIII", header)
+            dead, won, quit, progress, width, height, nbytes = struct.unpack("!7I", header)
 
             if i == 0:
-                print(f"dead: {dead}, won: {won}, quit: {quit}, \nwidth: {width}, height: {height}, bytes: {nbytes}")
+                print(f"dead: {dead}, won: {won}, quit: {quit}, percent: {progress/100.0}%, \nwidth: {width}, height: {height}, bytes: {nbytes}")
             if nbytes != width * height:
                 raise ValueError("Unexpected pixel format")
 
             if dead or won or quit:
                 if train:
-                    a.step(device=device, step=i, reward=get_reward(dead, won), state=None, 
+                    a.step(device=device, step=i, percent=progress/100.0, reward=get_reward(dead, won), state=None, 
                         dead=dead, won=won, quit=quit)
 
                 if dead: print("Player dead. Waiting for respawn...")
@@ -80,6 +91,10 @@ try:
                 if quit: 
                     print("Level quit.")
                     break
+
+                if save and train and a.last_sucessful != 0 and i % save_steps == 0:
+                    print("Saving...")
+                    helpers.save_checkpoint(i, a.episode, save_folder, a.header, a.m, a.o, a.history)
                         
                 restart = True
                 continue
@@ -99,15 +114,16 @@ try:
                 helpers.reset_buffer(frames, x, num_frames)
 
                 if train:
-                    action = a.step(device, i, None, helpers.get_observation(frames))
+                    action = a.step(device, i, progress/100.0, None, helpers.get_observation(frames))
                 else:
                     action = a.infer(device, helpers.get_observation(frames))
+
                 restart = False
             else:
                 helpers.add_frame(frames, x)
 
                 if train:
-                    action = a.step(device, i, get_reward(dead, won), helpers.get_observation(frames))
+                    action = a.step(device, i, progress/100.0, get_reward(dead, won), helpers.get_observation(frames))
                 else:
                     action = a.infer(device, helpers.get_observation(frames))
 
@@ -121,7 +137,6 @@ try:
                 print("Invalid action!")
                 break
             
-
             if render:
                 frame = np.frombuffer(pixels, dtype=np.uint8)
                 frame = frame.reshape((height, width))
@@ -133,6 +148,6 @@ except (OSError, ValueError, KeyboardInterrupt) as e:
     print(f"Error encountered: {e}")
 finally:
     print("finally")
-    if save and a.last_sucessful != 0 and train:
+    if save and train and a.last_sucessful != 0:
         print("Saving and exiting...")
-        helpers.save_checkpoint(a.last_sucessful, a.episode, save_file, a.header, a.m, a.o, a.history)
+        helpers.save_checkpoint(a.last_sucessful, a.episode, save_folder, a.header, a.m, a.o, a.history)

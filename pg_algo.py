@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 algo_code = "pg"
-header = "episode,step,reward"
+header = "episode,step,percent,reward"
 
 # Hyperparameters
 batch_size = 2000 # how many target steps per update
@@ -62,10 +62,9 @@ def init(model_class, cp_path, device, train):
 def infer(device, state):
     state = state.to(device=device, dtype=torch.float32) / 255.0
     logits = m(state)
-
     return logits.argmax(dim=-1).item()
 
-def step(device, step, reward, state, dead=False, won=False, quit=False):
+def step(device, step, percent, reward, state, dead=False, won=False, quit=False):
 
     global total_reward, episode, step_counter, last_sucessful
     global rewards, saved_log_probs, saved_returns
@@ -81,8 +80,8 @@ def step(device, step, reward, state, dead=False, won=False, quit=False):
         return
     elif dead or won:
         episode += 1
-        history.append([episode, step, total_reward])
-        print(f"Episode {episode} complete! | Step: {step}, Total reward: {total_reward:.4f}")
+        history.append([episode, step, percent, total_reward])
+        print(f"Episode {episode} complete! | Step: {step}, Percent {percent}%, Total reward: {total_reward}")
         total_reward = 0
 
         # Calculate discounted returns
