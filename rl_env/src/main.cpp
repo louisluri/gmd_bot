@@ -356,7 +356,8 @@ void capture_and_send_data()
             return;
         }
 
-        FrameHeader header{htonl(dead), htonl(won), htonl(quit), htonl(terminal_progress), 
+        FrameHeader header{htonl(dead), htonl(won), htonl(quit), 
+            htonl(terminal_progress), 
             htonl(0), htonl(0), htonl(0)};
 
         if (!change_blocking_mode(python_socket, 0) ||

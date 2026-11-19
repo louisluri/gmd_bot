@@ -58,10 +58,12 @@ def init(model_class, cp_path, device, train):
         print("no cp found")
         return 0
 
+def prepare(state, device):
+    return state.to(device=device, dtype=torch.float32) / 255.0
+
 @torch.no_grad()
 def infer(device, state):
-    state = state.to(device=device, dtype=torch.float32) / 255.0
-    logits = m(state)
+    logits = m(prepare(state, device))
     return logits.argmax(dim=-1).item()
 
 def step(device, step, percent, reward, state, dead=False, won=False, quit=False):
@@ -115,7 +117,7 @@ def step(device, step, percent, reward, state, dead=False, won=False, quit=False
         if state is None:
             raise ValueError("Player not dead or won or quit but no state passed!")
         
-        logits = m(state.to(device=device, dtype=torch.float32) / 255.0)
+        logits = m(prepare(state, device))
         probs = F.softmax(logits, dim=-1)
 
         # Create a distribution object 

@@ -2,6 +2,7 @@ import socket
 from collections import deque
 import struct
 import numpy as np
+import time
 import cv2
 import torch
 import os
@@ -18,6 +19,8 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
 
+torch.set_num_threads(1)
+
 num_frames = 4
 header_size = 28
 
@@ -32,7 +35,7 @@ current_level = "cubetest"
 load = False
 
 model_number = "00"
-load_step = 3146
+load_step = 1152
 load_level = "cubetest"
 
 save_folder = f"saves/{a.algo_code}_{m.model_code}{model_number}/{current_level}"
@@ -81,6 +84,10 @@ try:
             if nbytes != width * height:
                 raise ValueError("Unexpected pixel format")
 
+            if save and train and a.last_sucessful != 0 and i % save_steps == 0:
+                print("Saving...")
+                helpers.save_checkpoint(i, a.episode, save_folder, a.header, a.m, a.o, a.history)
+
             if dead or won or quit:
                 if train:
                     a.step(device=device, step=i, percent=progress/100.0, reward=get_reward(dead, won), state=None, 
@@ -91,10 +98,6 @@ try:
                 if quit: 
                     print("Level quit.")
                     break
-
-                if save and train and a.last_sucessful != 0 and i % save_steps == 0:
-                    print("Saving...")
-                    helpers.save_checkpoint(i, a.episode, save_folder, a.header, a.m, a.o, a.history)
                         
                 restart = True
                 continue
