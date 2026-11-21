@@ -2,31 +2,44 @@ import torch
 from torch.distributions import Categorical
 import torch.nn.functional as F
 import torch.optim as optim
+import helpers as h
 
-algo_code = "pg"
-header = "episode,step,percent,reward"
+if torch.cuda.is_available():
+    device = torch.device("cuda:1" if torch.cuda.device_count() > 1 else "cuda:0")
+else:
+    device = torch.device("cpu")
+
+code = "pg"
+header = "episode,step,optim_step,percent,reward"
 
 # Hyperparameters
 batch_size = 2000 # how many target steps per update
 gamma = 0.95  # Discount factor
 lr = 0.0005  # Learning rate
 
-total_reward = 0
-episode = 0
-last_sucessful = 0
-
 saved_log_probs = [] # To store log probabilities of actions taken, used for calculating the policy gradient
 rewards = [] # To store rewards for each episode, used for calculating returns
 saved_returns = [] # To store the discounted returns for each episode, used for calculating the policy gradient
 
 step_counter = 0
+total_reward = 0
 history = [] # To store episode, step, reward for plotting
 
 m = None
 o = None
 
-def init(model_class, cp_path, device, train):
-    global m, o, lr, episode
+save_folder = None
+
+step = 0
+episode = 0
+optim_step = 0 # gradient step count
+
+def init(model_class, train, load_file, folder, resume_level):
+    global m, o
+    global save_folder
+    global step, episode, optim_step
+
+    save_folder = folder
 
     m = model_class().to(device)
 
@@ -35,10 +48,10 @@ def init(model_class, cp_path, device, train):
     else:
         m.eval()
 
-    if cp_path is not None:
+    if load_file is not None:
         print("loading cp...")
         checkpoint = torch.load(
-            cp_path,
+            load_file,
             map_location=device,
             weights_only=True
         )
@@ -49,41 +62,42 @@ def init(model_class, cp_path, device, train):
         if train:
             o.load_state_dict(checkpoint["optimizer"])
 
-        episode = checkpoint["episode"]
+            step = checkpoint['step']
+            optim_step = checkpoint["optim_step"]
 
-        print(f"Checkpoint loaded! Step: {checkpoint['step']}, Episode: {episode}")
+            if resume_level:
+                episode = checkpoint["episode"]
 
-        return checkpoint["step"]
+        print(f"Checkpoint loaded! Step: {step}, Episode: {episode}, Optim_step: {optim_step}")
     else:
         print("no cp found")
-        return 0
 
-def prepare(state, device):
+def prepare(state):
     return state.to(device=device, dtype=torch.float32) / 255.0
 
 @torch.no_grad()
-def infer(device, state):
-    logits = m(prepare(state, device))
+def infer(state):
+    logits = m(prepare(state))
     return logits.argmax(dim=-1).item()
 
-def step(device, step, percent, reward, state, dead=False, won=False, quit=False):
+def step_model(percent, reward, state, dead=False, won=False, quit=False, save_pending=False):
 
-    global total_reward, episode, step_counter, last_sucessful
-    global rewards, saved_log_probs, saved_returns
+    global step, episode, optim_step
+    global total_reward, step_counter
+    global rewards, saved_log_probs, saved_returns, history
 
     if reward is not None:
         rewards.append(reward)
-
         total_reward += reward
-
+        step += 1
         step_counter += 1
 
     if quit:
         return
     elif dead or won:
         episode += 1
-        history.append([episode, step, percent, total_reward])
-        print(f"Episode {episode} complete! | Step: {step}, Percent {percent}%, Total reward: {total_reward}")
+        history.append([episode, step, optim_step, percent, total_reward])
+        print(f"Episode {episode} complete! | Step: {step}, Total reward: {total_reward}")
         total_reward = 0
 
         # Calculate discounted returns
@@ -112,12 +126,18 @@ def step(device, step, percent, reward, state, dead=False, won=False, quit=False
             saved_log_probs = []
             saved_returns = []
             step_counter = 0
-            last_sucessful = step
+
+            optim_step += 1
+
+            if save_pending:
+                h.save_checkpoint(m, o, step, episode, optim_step, history, save_folder)
+                history = []
+                return True
     else:
         if state is None:
             raise ValueError("Player not dead or won or quit but no state passed!")
         
-        logits = m(prepare(state, device))
+        logits = m(prepare(state))
         probs = F.softmax(logits, dim=-1)
 
         # Create a distribution object 

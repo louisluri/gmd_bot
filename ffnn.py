@@ -1,7 +1,7 @@
 import torch.nn as nn
 import cnn
 
-model_code = "pg"
+code = "ffnn"
     
 class Model(nn.Module):
     def __init__(self):

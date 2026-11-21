@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import os
+import csv
 
 def reset_buffer(frames, first_frame, num_frames):
     frames.clear()
@@ -33,24 +34,21 @@ def recv_exact(sock, n):
 
     return data
 
-def save_checkpoint(step, episode, folder, header, model, optim, data):
+def save_checkpoint(model, optim, step, episode, optim_step, history, folder):
     # Save only the weights (state_dict) to a .pt file
     checkpoint = {
         "model": model.state_dict(),
         "optimizer": optim.state_dict(),
         "step": step,
-        "episode": episode
+        "episode": episode,
+        "optim_step": optim_step
     }
-    torch.save(checkpoint, f"{folder}/step{step}.pt")
+    torch.save(checkpoint, f"{folder}/e{episode}.pt")
 
     print("Model checkpoint saved successfully!")
 
-    # Save to CSV, specifying a comma delimiter and a clean header
-    np.savetxt(
-        f"{folder}/step{step}.csv", 
-        np.array(data), 
-        delimiter=",", 
-        header=header, 
-        comments='' # Prevents NumPy from adding a '#' before the header
-    )
+    with open(f"{folder}/metrics.csv", "a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerows(history)
+
     print(f"Metrics saved")

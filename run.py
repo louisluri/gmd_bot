@@ -2,155 +2,148 @@ import socket
 from collections import deque
 import struct
 import numpy as np
-import time
 import cv2
 import torch
 import os
-import helpers
-import pg_ffnn as m
+import helpers as h
+import ffnn as m
 import pg_algo as a
+
+torch.set_num_threads(1) # Makes the state prep operations more efficient
 
 port = 5555
 
-if torch.cuda.is_available():
-    device = torch.device(
-        "cuda:1" if torch.cuda.device_count() > 1 else "cuda:0"
-    )
-else:
-    device = torch.device("cpu")
-
-torch.set_num_threads(1)
-
-num_frames = 4
+num_frames = 4 # number of frames to pass to model
 header_size = 28
 
 render = False
 
-train = True
+train = False
 
-save = True    # save model and data when done?
-save_steps = 10000
-current_level = "cubetest"
+save = True
+load = True
 
-load = False
+save_steps = 25000 # min number of steps between saves
 
 model_number = "00"
-load_step = 1152
-load_level = "cubetest"
+current_level = "bot"
 
-save_folder = f"saves/{a.algo_code}_{m.model_code}{model_number}/{current_level}"
-load_file   = f"saves/{a.algo_code}_{m.model_code}{model_number}/{load_level}/step{load_step}.pt" if load else None
+load_episode = 0
+load_level = "stereo_madness"
+
+model_folder = f"saves/{a.code}_{m.code}{model_number}"
+save_folder  = f"{model_folder}/{current_level}"
+load_file    = f"{model_folder}/{load_level}/e{load_episode}.pt" if load else None
 
 if save:
     os.makedirs("saves", exist_ok=True)
-    os.makedirs(f"saves/{a.algo_code}_{m.model_code}{model_number}", exist_ok=True)
-    os.makedirs(f"{save_folder}", exist_ok=True)
+    os.makedirs(model_folder, exist_ok=True)
+    os.makedirs(save_folder, exist_ok=True)
 
-frames = deque(maxlen=num_frames)
+    if not os.path.exists(f"{save_folder}/metrics.csv"):
+        with open(f"{save_folder}/metrics.csv", "w") as file:
+            file.write(a.header + "\n")
 
 def get_reward(dead, won):
     if dead:
         return -1
-    elif won:
-        return 1
     else:
         return 0
 
-i = 0
+step_counter = 0
+save_pending = False
+
+frames = deque(maxlen=num_frames)
 restart = True
-try:
-    i = a.init(m.Model, load_file, device, train)
 
-    if train:
-        print("training model...")
-    else:
-        print("running inference...")
+a.init(m.Model, train, load_file, save_folder, current_level == load_level)
 
-    print("Waiting for Geometry Dash...")
+if train:
+    print("training model...")
+else:
+    print("running inference...")
 
-    with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
-        sock.settimeout(60.0)
+print("Waiting for Geometry Dash...")
 
-        print("Connected to Geometry Dash!")
+with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+    sock.settimeout(60.0)
 
-        while True:
-            # Receive frame header
-            header = helpers.recv_exact(sock, header_size)
+    print("Connected to Geometry Dash!")
 
-            dead, won, quit, progress, width, height, nbytes = struct.unpack("!7I", header)
+    while True:
+        # Receive frame header
+        header = h.recv_exact(sock, header_size)
 
-            if i == 0:
-                print(f"dead: {dead}, won: {won}, quit: {quit}, percent: {progress/100.0}%, \nwidth: {width}, height: {height}, bytes: {nbytes}")
-            if nbytes != width * height:
-                raise ValueError("Unexpected pixel format")
+        dead, won, quit, progress, width, height, nbytes = struct.unpack("!7I", header)
 
-            if save and train and a.last_sucessful != 0 and i % save_steps == 0:
-                print("Saving...")
-                helpers.save_checkpoint(i, a.episode, save_folder, a.header, a.m, a.o, a.history)
+        percent = progress / 100.0
 
-            if dead or won or quit:
-                if train:
-                    a.step(device=device, step=i, percent=progress/100.0, reward=get_reward(dead, won), state=None, 
-                        dead=dead, won=won, quit=quit)
+        if restart:
+            print(f"dead: {dead}, won: {won}, quit: {quit}, percent: {progress/100.0}%, \nwidth: {width}, height: {height}, bytes: {nbytes}")
+        if nbytes != width * height:
+            raise ValueError("Unexpected pixel format")
 
-                if dead: print("Player dead. Waiting for respawn...")
-                if won: print("Level won. Waiting for respawn...")
-                if quit: 
-                    print("Level quit.")
-                    break
-                        
-                restart = True
-                continue
+        if dead or won or quit:
 
-            # Check frame metadata
-            if width == 0 or height == 0 or not (0 < nbytes <= 50_000_000):
-                raise ValueError("Invalid frame metadata")
+            if train:
+                if a.step_model(percent, get_reward(dead, won), None, dead, won, quit, save_pending):
+                    save_pending = False
 
-            # Receive image
-            pixels = helpers.recv_exact(sock, nbytes)
 
-            # pixels is a bytes or bytearray object
-            x = torch.frombuffer(pixels, dtype=torch.uint8)
-            x = x.reshape(height, width)
-
-            if restart:
-                helpers.reset_buffer(frames, x, num_frames)
-
-                if train:
-                    action = a.step(device, i, progress/100.0, None, helpers.get_observation(frames))
-                else:
-                    action = a.infer(device, helpers.get_observation(frames))
-
-                restart = False
-            else:
-                helpers.add_frame(frames, x)
-
-                if train:
-                    action = a.step(device, i, progress/100.0, get_reward(dead, won), helpers.get_observation(frames))
-                else:
-                    action = a.infer(device, helpers.get_observation(frames))
-
-            i += 1
-
-            if action == 1:
-                sock.sendall(b'1')
-            elif action == 0:
-                sock.sendall(b'0')
-            else:
-                print("Invalid action!")
+            if dead: print(f"Player dead at {percent}%. Waiting for respawn...")
+            if won: print("Level won. Waiting for respawn...")
+            if quit: 
+                print("Level quit.")
                 break
-            
-            if render:
-                frame = np.frombuffer(pixels, dtype=np.uint8)
-                frame = frame.reshape((height, width))
+                    
+            restart = True
+            continue
 
-                cv2.imshow("Geometry Dash", frame)
-                cv2.waitKey(1)
+        # Check frame metadata
+        if width == 0 or height == 0 or not (0 < nbytes <= 50_000_000):
+            raise ValueError("Invalid frame metadata")
 
-except (OSError, ValueError, KeyboardInterrupt) as e:
-    print(f"Error encountered: {e}")
-finally:
-    print("finally")
-    if save and train and a.last_sucessful != 0:
-        print("Saving and exiting...")
-        helpers.save_checkpoint(a.last_sucessful, a.episode, save_folder, a.header, a.m, a.o, a.history)
+        # Receive image
+        pixels = h.recv_exact(sock, nbytes)
+
+        # pixels is a bytes or bytearray object
+        x = torch.frombuffer(pixels, dtype=torch.uint8)
+        x = x.reshape(height, width)
+
+        if restart:
+            h.reset_buffer(frames, x, num_frames)
+
+            if train:
+                action = a.step_model(percent, None, h.get_observation(frames))
+            else:
+                action = a.infer(h.get_observation(frames))
+
+            restart = False
+        else:
+            h.add_frame(frames, x)
+
+            if train:
+                action = a.step_model(percent, get_reward(dead, won), h.get_observation(frames))
+            else:
+                action = a.infer(h.get_observation(frames))
+
+        if action == 1:
+            sock.sendall(b'1')
+            #print("jump!")
+        elif action == 0:
+            sock.sendall(b'0')
+            #print("dont!")
+        else:
+            print("Invalid action!")
+            break
+
+        step_counter += 1
+        if save and step_counter % save_steps == 0:
+            save_pending = True
+        
+        if render:
+            frame = np.frombuffer(pixels, dtype=np.uint8)
+            frame = frame.reshape((height, width))
+
+            cv2.imshow("Geometry Dash", frame)
+            cv2.waitKey(1)

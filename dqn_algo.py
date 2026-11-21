@@ -4,9 +4,15 @@ import torch.optim as optim
 from collections import deque
 import copy
 import random
+import helpers as h
 
-algo_code = "dqn"
-header = "episode,step,eps,percent,reward"
+if torch.cuda.is_available():
+    device = torch.device("cuda:1" if torch.cuda.device_count() > 1 else "cuda:0")
+else:
+    device = torch.device("cpu")
+
+code = "dqn"
+header = "episode,step,optim_step,eps,percent,reward"
 
 def e_greedy_action_selection(action_values, eps):
     if random.random() < eps:
@@ -35,18 +41,27 @@ last_action = None
 current_eps = None
 
 total_reward = 0
-episode = 0
-last_sucessful = 0
-level_steps = 0
+
+level_steps = 0 # tracks steps in the current run
 history = [] # To store episode, step, epsilon, reward for plotting
 
 m = None
 o = None
 target_m = None
 
-def init(model_class, cp_path, device, train):
+save_folder = None
 
-    global m, o, target_m, episode
+step = 0
+episode = 0
+optim_step = 0 # gradient step count
+
+def init(model_class, train, load_file, folder, resume_level):
+
+    global m, o, target_m
+    global save_folder
+    global step, episode, optim_step
+
+    save_folder = folder
 
     m = model_class().to(device)
 
@@ -55,10 +70,10 @@ def init(model_class, cp_path, device, train):
     else:
         m.eval()
 
-    if cp_path is not None:
+    if load_file is not None:
         print("loading cp...")
         checkpoint = torch.load(
-            cp_path,
+            load_file,
             map_location=device,
             weights_only=True
         )
@@ -69,9 +84,13 @@ def init(model_class, cp_path, device, train):
         if train:
             o.load_state_dict(checkpoint["optimizer"])
 
-        episode = checkpoint["episode"]
+            step = checkpoint['step']
+            optim_step = checkpoint["optim_step"]
 
-        print(f"Checkpoint loaded! Step: {checkpoint['step']}, Episode: {episode}")
+            if resume_level:
+                episode = checkpoint["episode"]
+
+        print(f"Checkpoint loaded! Step: {step}, Episode: {episode}, Optim_step: {optim_step}")
     else:
         print("no cp found")
 
@@ -83,19 +102,18 @@ def init(model_class, cp_path, device, train):
         for param in target_m.parameters():
             param.requires_grad = False
 
-    return 0 if cp_path is None else checkpoint['step']
-
-def prepare(state, device):
+def prepare(state):
     return state.to(device=device, dtype=torch.float32) / 255.0
 
 @torch.no_grad()
-def infer(device, state):
-    q_values = m(prepare(state, device))
+def infer(state):
+    q_values = m(prepare(state))
     return q_values.argmax(dim=-1).item()
 
-def step(device, step, percent, reward, state, dead=False, won=False, quit=False):
+def step_model(percent, reward, state, dead=False, won=False, quit=False, save_pending=False):
 
-    global total_reward, episode, last_sucessful, level_steps
+    global step, episode, optim_step
+    global total_reward, level_steps, history
     global last_state, last_action, current_eps
 
     if reward is not None:
@@ -105,14 +123,15 @@ def step(device, step, percent, reward, state, dead=False, won=False, quit=False
             memory.append((last_state, last_action, reward, state, (dead or won)))
         total_reward += reward
         level_steps += 1
+        step += 1
 
     if quit:
         return
     elif dead or won:
         episode += 1
         diff = torch.norm(torch.stack([torch.norm(p1 - p2) for p1, p2 in zip(m.parameters(), target_m.parameters())]))
-        history.append([episode, step, current_eps, percent, total_reward])
-        print(f"Episode {episode} complete! | Step: {step}, Epsilon (ε): {current_eps:.4f}, Diff: {diff:.4f}, Percent: {percent}%, Total reward: {total_reward}")
+        history.append([episode, step, optim_step, current_eps, percent, total_reward])
+        print(f"Episode {episode} complete! | Step: {step}, Epsilon (ε): {current_eps:.4f}, Diff: {diff:.4f}, Total reward: {total_reward}")
         total_reward = 0
         last_state = None
         last_action = None
@@ -123,10 +142,10 @@ def step(device, step, percent, reward, state, dead=False, won=False, quit=False
 
         states, actions, rewards, next_states, terminateds = zip(*batch)
 
-        state_batch = prepare(torch.cat(states, dim=0), device)
+        state_batch = prepare(torch.cat(states, dim=0))
         action_batch = torch.tensor(actions).unsqueeze(1) # Needs to be [[a1], [a2]...]
         reward_batch = torch.tensor(rewards).float()
-        next_state_batch = prepare(torch.cat(next_states, dim=0), device)
+        next_state_batch = prepare(torch.cat(next_states, dim=0))
         terminal_batch = torch.tensor(terminateds).float()
 
         q_values = m(state_batch).gather(1, action_batch.to(device)).squeeze(1)
@@ -146,14 +165,19 @@ def step(device, step, percent, reward, state, dead=False, won=False, quit=False
 
         soft_update(m, target_m, tau)
 
-        last_sucessful = step
+        optim_step += 1
 
-    if not (dead or won):
+    if dead or won:
+        if save_pending:
+            h.save_checkpoint(m, o, step, episode, optim_step, history, save_folder)
+            history = []
+            return True
+    else:
         current_eps = max(eps_min, eps_max - (eps_max - eps_min) * (level_steps / train_steps))  # Linear decay of epsilon
 
         m.eval()  # Set to evaluation mode
         with torch.no_grad(): # Dont waste resources on calculating gradients
-            q_values = m(prepare(state, device))
+            q_values = m(prepare(state))
         m.train()
         
         action = e_greedy_action_selection(q_values, current_eps)
