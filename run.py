@@ -23,12 +23,12 @@ train = False
 save = True
 load = True
 
-save_steps = 25000 # min number of steps between saves
+save_steps = 20000 # min number of steps between saves
 
 model_number = "00"
-current_level = "bot"
+current_level = "stereo_madness"
 
-load_episode = 0
+load_episode = 18255
 load_level = "stereo_madness"
 
 model_folder = f"saves/{a.code}_{m.code}{model_number}"
@@ -66,7 +66,7 @@ else:
 print("Waiting for Geometry Dash...")
 
 with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
-    sock.settimeout(60.0)
+    sock.setblocking(True)
 
     print("Connected to Geometry Dash!")
 
@@ -78,8 +78,8 @@ with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
 
         percent = progress / 100.0
 
-        if restart:
-            print(f"dead: {dead}, won: {won}, quit: {quit}, percent: {progress/100.0}%, \nwidth: {width}, height: {height}, bytes: {nbytes}")
+        #if restart:
+        #    print(f"dead: {dead}, won: {won}, quit: {quit}, percent: {progress/100.0}%, \nwidth: {width}, height: {height}, bytes: {nbytes}")
         if nbytes != width * height:
             raise ValueError("Unexpected pixel format")
 
@@ -90,10 +90,10 @@ with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
                     save_pending = False
 
 
-            if dead: print(f"Player dead at {percent}%. Waiting for respawn...")
-            if won: print("Level won. Waiting for respawn...")
+            if dead: print(f"Player dead at {percent}%. Waiting for respawn...\n")
+            if won: print("Level won. Waiting for respawn...\n")
             if quit: 
-                print("Level quit.")
+                print("Level quit.\n")
                 break
                     
             restart = True

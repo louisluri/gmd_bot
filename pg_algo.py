@@ -13,9 +13,9 @@ code = "pg"
 header = "episode,step,optim_step,percent,reward"
 
 # Hyperparameters
-batch_size = 2000 # how many target steps per update
-gamma = 0.95  # Discount factor
-lr = 0.0005  # Learning rate
+batch_size = 4000 # how many target steps per update
+gamma = 0.99  # Discount factor
+lr = 0.0001  # Learning rate
 
 saved_log_probs = [] # To store log probabilities of actions taken, used for calculating the policy gradient
 rewards = [] # To store rewards for each episode, used for calculating returns
@@ -62,15 +62,22 @@ def init(model_class, train, load_file, folder, resume_level):
         if train:
             o.load_state_dict(checkpoint["optimizer"])
 
+            for group in o.param_groups:
+                group["lr"] = lr
+
             step = checkpoint['step']
-            optim_step = checkpoint["optim_step"]
+            #optim_step = checkpoint["optim_step"]
 
             if resume_level:
                 episode = checkpoint["episode"]
+                
+            print(f"Learning rate: {o.param_groups[0]['lr']:.8e}")
 
         print(f"Checkpoint loaded! Step: {step}, Episode: {episode}, Optim_step: {optim_step}")
     else:
         print("no cp found")
+
+    print(f"Total parameters {sum(p.numel() for p in m.parameters()):,}\n")
 
 def prepare(state):
     return state.to(device=device, dtype=torch.float32) / 255.0
@@ -121,6 +128,8 @@ def step_model(percent, reward, state, dead=False, won=False, quit=False, save_p
             loss = -(log_probs * returns).sum() # Eτ∼πθ​​[t=0∑T ​∇θ​logπθ​(at​∣st​)⋅Gt​] (negative for gradient descent)
             o.zero_grad()
             loss.backward()
+            # Clip gradient norm to 1.0
+            grad_norm = torch.nn.utils.clip_grad_norm_(m.parameters(), max_norm=1.0)
             o.step()
 
             saved_log_probs = []
@@ -128,11 +137,13 @@ def step_model(percent, reward, state, dead=False, won=False, quit=False, save_p
             step_counter = 0
 
             optim_step += 1
+            print("Gradient update complete")
+            print(f"Norm before clipping: {grad_norm.item():.4f}\n")
 
             if save_pending:
                 h.save_checkpoint(m, o, step, episode, optim_step, history, save_folder)
                 history = []
-                return True
+                return True # Tell "run.py" that the save was completed
     else:
         if state is None:
             raise ValueError("Player not dead or won or quit but no state passed!")

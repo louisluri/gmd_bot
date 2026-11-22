@@ -84,11 +84,16 @@ def init(model_class, train, load_file, folder, resume_level):
         if train:
             o.load_state_dict(checkpoint["optimizer"])
 
+            for group in o.param_groups:
+                group["lr"] = lr
+
             step = checkpoint['step']
             optim_step = checkpoint["optim_step"]
 
             if resume_level:
                 episode = checkpoint["episode"]
+
+            print(f"Learning rate: {o.param_groups[0]['lr']:.8e}")
 
         print(f"Checkpoint loaded! Step: {step}, Episode: {episode}, Optim_step: {optim_step}")
     else:
@@ -101,6 +106,8 @@ def init(model_class, train, load_file, folder, resume_level):
         target_m.eval()
         for param in target_m.parameters():
             param.requires_grad = False
+
+    print(f"Total parameters {sum(p.numel() for p in m.parameters()):,}\n")
 
 def prepare(state):
     return state.to(device=device, dtype=torch.float32) / 255.0

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 6), facecolor="grey")
 
 
-model = "pg_pg00"
+model = "pg_ffnn00"
 levels = ["stereo_madness"]
 colors = ['indigo', 'g', "#8A2BE2", 'b', 'c', 'g', 'y', 'orange', 'r', 'darkred']
 
