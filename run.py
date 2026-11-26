@@ -7,7 +7,7 @@ import torch
 import os
 import helpers as h
 import ffnn as m
-import pg_algo as a
+import dqn_algo as a
 
 torch.set_num_threads(1) # Makes the state prep operations more efficient
 
@@ -18,12 +18,12 @@ header_size = 28
 
 render = False
 
-train = False
+train = True
 
 save = True
-load = True
+load = False
 
-save_steps = 20000 # min number of steps between saves
+save_steps = 10000 # min number of steps between saves
 
 model_number = "00"
 current_level = "stereo_madness"

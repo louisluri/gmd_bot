@@ -1,4 +1,5 @@
 #include <chrono>
+#include <string_view>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -7,6 +8,8 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/GameManager.hpp>
+#include <Geode/modify/PlayerObject.hpp>
 
 using namespace geode::prelude;
 
@@ -21,6 +24,96 @@ namespace
     };
 
     RLSettings settings;
+
+    struct IconManager 
+    {
+        int player;
+        int ship;
+        int ball;
+        int bird;
+        int dart;
+        int robot;
+        int spider;
+        int swing;
+        int jetpack;
+        int color;
+        int color2;
+        bool glow;
+        int trail;
+        int ship_fire;
+
+        bool captured = false;
+
+        void capture() 
+        {
+            if (captured) {return;}
+
+            auto gm = GameManager::get();
+
+            player = gm->getPlayerFrame();
+            ship = gm->getPlayerShip();
+            ball = gm->getPlayerBall();
+            bird = gm->getPlayerBird();
+            dart = gm->getPlayerDart();
+            robot = gm->getPlayerRobot();
+            spider = gm->getPlayerSpider();
+            swing = gm->getPlayerSwing();
+            jetpack = gm->getPlayerJetpack();
+            color = gm->getPlayerColor();
+            color2 = gm->getPlayerColor2();
+            glow = gm->getPlayerGlow();
+            trail = gm->getPlayerStreak();
+            ship_fire = gm->getPlayerShipFire();
+
+            captured = true;
+        }
+
+        void restore() 
+        {
+            if (!captured) {return;}
+
+            auto gm = GameManager::get();
+
+            gm->setPlayerFrame(player);
+            gm->setPlayerShip(ship);
+            gm->setPlayerBall(ball);
+            gm->setPlayerBird(bird);
+            gm->setPlayerDart(dart);
+            gm->setPlayerRobot(robot);
+            gm->setPlayerSpider(spider);
+            gm->setPlayerSwing(swing);
+            gm->setPlayerJetpack(jetpack);
+            gm->setPlayerColor(color);
+            gm->setPlayerColor2(color2);
+            gm->setPlayerGlow(glow);
+            gm->setPlayerStreak(trail);
+            gm->setPlayerShipStreak(ship_fire);
+
+            captured = false;
+        }
+
+        void apply_defaults() 
+        {
+            auto gm = GameManager::get();
+
+            gm->setPlayerFrame(1);
+            gm->setPlayerShip(1);
+            gm->setPlayerBall(1);
+            gm->setPlayerBird(1);
+            gm->setPlayerDart(1);
+            gm->setPlayerRobot(1);
+            gm->setPlayerSpider(1);
+            gm->setPlayerSwing(1);
+            gm->setPlayerJetpack(1);
+            gm->setPlayerColor(0);
+            gm->setPlayerColor2(3);
+            gm->setPlayerGlow(false);
+            gm->setPlayerStreak(1);
+            gm->setPlayerShipStreak(1);
+        }
+    };
+
+    IconManager icon_manager{};
 
     SOCKET sock = INVALID_SOCKET;
     SOCKET python_socket = INVALID_SOCKET;
@@ -120,6 +213,8 @@ void reset_mod()
     dead = false;
     won = false;
     quit = false;
+
+    icon_manager.restore();
 
     log::info("RL mod successfully reset!");
 }
@@ -524,7 +619,18 @@ class $modify(MyPlayLayer, PlayLayer)
 {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) 
     {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {return false;}
+        icon_manager.capture();
+        icon_manager.apply_defaults();
+
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) 
+        {
+            icon_manager.restore();
+            return false;
+        }
+
+        if (m_progressBar) {m_progressBar->setVisible(false);}
+        if (m_percentageLabel) {m_percentageLabel->setVisible(false);}
+        CCDirector::sharedDirector()->setDisplayStats(false);
 
         // settings that may have been changed
         load_settings();
@@ -600,6 +706,8 @@ class $modify(MyPlayLayer, PlayLayer)
 
             capture_and_send_data();
         }
+
+        icon_manager.restore();
         
         PlayLayer::onQuit();
     }
@@ -648,5 +756,48 @@ class $modify(MyMenuLayer, MenuLayer)
             "Mod successfully reset!",
             "OK"
         )->show();
+    }
+};
+
+class $modify(GameManager) 
+{
+    bool getGameVariable(char const* key) 
+    {
+        std::string_view id(key);
+
+        if (
+            id == "0177" || // CBS
+            id == "0176" || // COS
+            id == "0040" || // Show Percentage
+            id == "0115" || // Show FPS
+            id == "0179" || // Hitboxes on Death
+            id == "0129" || // Disable Portal Guide
+            id == "0060" || //Default Mini Icon	true
+            id == "0096" || //Switch Wave Trail Color	false
+            id == "0061" || //Switch Spider Teleport Color	false
+            id == "0062" || //Switch Dash Fire Color	false
+            id == "0145" || //Show Time	false
+            id == "0144"    //Audio Visualizer
+        )
+        {
+            return false;
+        }
+
+        if (
+            id == "0014" || // Disable Explosion Shake
+            id == "0072" || // Disable Gravity Effect
+            id == "0081" || // Disable Shake Effects
+            id == "0172" || // Disable Shake (2.2)
+            id == "0130" || // Enable Orb Guide
+            id == "0140" || // Disable Orb Scale
+            id == "0141" || // Disable Trigger Orb Scale
+            id == "0134" ||	//Hide Attempts	true
+            id == "0135" 	//Hide Practice Attempts
+        )
+        {
+            return true;
+        }
+
+        return GameManager::getGameVariable(key);
     }
 };

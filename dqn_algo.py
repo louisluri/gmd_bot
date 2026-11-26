@@ -24,14 +24,14 @@ def soft_update(model, target_model, tau):
     for target_param, param in zip(target_model.parameters(), model.parameters()):
         target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
 
-memory = deque(maxlen=50000)
+memory = deque(maxlen=15000)
 
 # Hyperparameters
 batch_size = 128
 min_to_train = 2000
 train_steps = 200000 # How many steps to decay epsilon for
 gamma = 0.99  # Discount factor
-lr = 0.001  # Learning rate
+lr = 0.0001  # Learning rate
 eps_max = 0.9  # Exploration rate
 eps_min = 0.05
 tau = 0.005 # Small value, e.g., 0.5% update
@@ -168,6 +168,7 @@ def step_model(percent, reward, state, dead=False, won=False, quit=False, save_p
         l = F.smooth_l1_loss(q_values, target_qs) # Huber loss, less sensitive to outliers than MSE
         o.zero_grad()
         l.backward()
+        torch.nn.utils.clip_grad_norm_(m.parameters(), 10.0)
         o.step()
 
         soft_update(m, target_m, tau)
@@ -189,6 +190,6 @@ def step_model(percent, reward, state, dead=False, won=False, quit=False, save_p
         
         action = e_greedy_action_selection(q_values, current_eps)
 
-        last_state = state.detach().cpu().clone()
+        last_state = state.detach().cpu()
         last_action = action
         return action
